@@ -1,2 +1,5 @@
 pyserial
 crcmod
+influxdb
+
+pytest

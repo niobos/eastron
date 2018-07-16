@@ -1,4 +1,8 @@
+import functools
+import cmath
 import struct
+import typing
+
 import crcmod
 import serial
 
@@ -48,14 +52,17 @@ class Modbus:
         self.slave_address = slave_address
 
     @staticmethod
-    def _construct_request(slave_address, function_number, start_address, number_of_points):
+    def _construct_request(slave_address: int,
+                           function_number: int,
+                           start_address: int,
+                           number_of_points: int) -> bytes:
         msg = struct.pack("> B B H H", slave_address, function_number, start_address, number_of_points)
         crc = eastron_crc(msg)
         msg += struct.pack("< H", crc)  # Yes, little endian...
         return msg
 
     @staticmethod
-    def _read_modbus_response(get_n_bytes):
+    def _read_modbus_response(get_n_bytes: typing.Callable) -> dict:
         data = get_n_bytes(3)
         crc_data = bytearray(data)
         slave_address, func, data_len = struct.unpack("BBB", data)
@@ -78,7 +85,7 @@ class Modbus:
         }
 
     @staticmethod
-    def _normalize_ranges(*ranges):
+    def _normalize_ranges(*ranges) -> typing.List[typing.Tuple[int, int]]:
         """
         Normalize the given ranges to be a list of 2-tuples
         """
@@ -108,7 +115,7 @@ class Modbus:
         return normalized_ranges
 
     @staticmethod
-    def _aggregate_ranges(*ranges):
+    def _aggregate_ranges(*ranges) -> typing.List[typing.Tuple[int, int]]:
         ranges = Modbus._normalize_ranges(*ranges)
         ranges = sorted(ranges)
 
@@ -153,7 +160,7 @@ class Eastron(Modbus):
         'Phase 2 line to neutral volts [V]':     {'addr': 0x0002, '4w': True,  '3w': False, '2w': False},
         'Phase 3 line to neutral volts [V]':     {'addr': 0x0004, '4w': True,  '3w': False, '2w': False},
         'Phase 1 current [A]':                   {'addr': 0x0006, '4w': True,  '3w': True,  '2w': True},
-        'Phase 2 current [A]':                   {'addr': 0x0008, '4w': True,  '3w': True,  '2w': False},
+        'Phase 2 current [A]':                   {'addr': 0x0008, '4w': True,  '3w': True,  '2w': False},  # THIS VALUE IS WRONG for 3w
         'Phase 3 current [A]':                   {'addr': 0x000a, '4w': True,  '3w': True,  '2w': False},
         'Phase 1 power [W]':                     {'addr': 0x000c, '4w': True,  '3w': True,  '2w': True},
         'Phase 2 power [W]':                     {'addr': 0x000e, '4w': True,  '3w': False, '2w': False},
@@ -167,7 +174,7 @@ class Eastron(Modbus):
         'Phase 1 power factor []':               {'addr': 0x001e, '4w': True,  '3w': True,  '2w': True},
         'Phase 2 power factor []':               {'addr': 0x0020, '4w': True,  '3w': False, '2w': False},
         'Phase 3 power factor []':               {'addr': 0x0022, '4w': True,  '3w': True,  '2w': False},
-        'Phase 1 phase angle [º]':               {'addr': 0x0024, '4w': True,  '3w': False, '2w': True},  # ??? 2w==True ???
+        'Phase 1 phase angle [º]':               {'addr': 0x0024, '4w': True,  '3w': False, '2w': True},  # ??? 2w==True ???  # NOT FILLED IN FOR 3W
         'Phase 2 phase angle [º]':               {'addr': 0x0026, '4w': True,  '3w': False, '2w': False},
         'Phase 3 phase angle [º]':               {'addr': 0x0028, '4w': True,  '3w': False, '2w': False},
         'Average line to neutral volts [V]':     {'addr': 0x002a, '4w': True,  '3w': True,  '2w': False},
@@ -264,3 +271,96 @@ class Eastron(Modbus):
                 prom.set_value(vals[addr])
 
         self.delayed_reads = {}
+
+
+class Eastron3P3W(Eastron):
+    """Wrapper class to re-calculate wrong values"""
+    @functools.lru_cache()
+    def _data(self) -> dict:
+        return self.read_input_registers_float(
+            self.defined_registers['Line 1 to Line 2 volts [V]']['addr'],
+            self.defined_registers['Line 2 to Line 3 volts [V]']['addr'],
+            self.defined_registers['Line 3 to Line 1 volts [V]']['addr'],
+            self.defined_registers['Phase 1 power [W]']['addr'],
+            self.defined_registers['Phase 1 volt amps reactive [VAr]']['addr'],
+            self.defined_registers['Phase 3 power [W]']['addr'],
+            self.defined_registers['Phase 3 volt amps reactive [VAr]']['addr'],
+            self.defined_registers['Frequency of supply voltage [Hz]']['addr'],
+            self.defined_registers['Import Wh since reset [kWh]']['addr'],
+            self.defined_registers['Export Wh since reset [kWh]']['addr'],
+            self.defined_registers['Import VArh since reset [kVArh]']['addr'],
+            self.defined_registers['Export VArh since reset [kVArh]']['addr'],
+        )
+
+    def _addr(self, addr: int) -> float:
+        return self._data()[addr]
+
+    def U12(self) -> float:
+        return self._addr(self.defined_registers['Line 1 to Line 2 volts [V]']['addr'])
+
+    def U23(self) -> float:
+        return self._addr(self.defined_registers['Line 2 to Line 3 volts [V]']['addr'])
+
+    def U31(self) -> float:
+        return self._addr(self.defined_registers['Line 3 to Line 1 volts [V]']['addr'])
+
+    def S1_u12(self) -> complex:
+        """Phase 1 power. Angle lagging relative to U12."""
+        return complex(
+            self._addr(self.defined_registers['Phase 1 power [W]']['addr']),
+            self._addr(self.defined_registers['Phase 1 volt amps reactive [VAr]']['addr']),
+        )
+
+    def S3_u32(self) -> complex:
+        """Phase 3 power. Angle lagging relative to U32."""
+        return complex(
+            self._addr(self.defined_registers['Phase 3 power [W]']['addr']),
+            self._addr(self.defined_registers['Phase 3 volt amps reactive [VAr]']['addr']),
+        )
+    
+    def S(self) -> complex:
+        # TODO: do we need to correct the phase angles?
+        return self.S1_u12() + self.S3_u32()
+
+    def E(self) -> complex:
+        r = self._addr(self.defined_registers['Import Wh since reset [kWh]']['addr']) - \
+            self._addr(self.defined_registers['Export Wh since reset [kWh]']['addr'])
+        im = self._addr(self.defined_registers['Import VArh since reset [kVArh]']['addr']) - \
+            self._addr(self.defined_registers['Export VArh since reset [kVArh]']['addr'])
+        return complex(r, im)
+
+    def I1_u12(self) -> complex:
+        """Phase 1 current. Angle leading relative to U12."""
+        return (self.S1_u12() / self.U12()).conjugate()
+
+    def I1_u1(self) -> complex:
+        """Phase 1 current. Angle leading relative to U1"""
+        # Should match in amplitude with "Phase 1 current [A]"
+        # Convert from relative to U12 -> relative to U1
+        return - (self.I1_u12() * cmath.rect(1, 150 / 180 * cmath.pi))
+
+    def I3_u32(self) -> complex:
+        """Phase 1 current. Angle leading relative to U12"""
+        return (self.S3_u32() / self.U23()).conjugate()
+
+    def I3_u1(self) -> complex:
+        """Phase 3 current. Angle leading relative to U1"""
+        # Should match in amplitude with "Phase 3 current [A]"
+        # Convert from relative to U32 -> relative to U1
+        return - (self.I3_u32() * cmath.rect(1, 90 / 180 * cmath.pi))
+
+    def I3_u3(self) -> complex:
+        """Phase 3 current. Angle leading relative to U3"""
+        return self.I3_u1() * cmath.rect(1, 120 / 180 * cmath.pi)
+
+    def I2_u1(self) -> complex:
+        """Phase 2 current. Angle leading relative to U1"""
+        # "Phase 2 current [A]" is wrong. We need to calculate it ourselves
+        return - self.I1_u1() - self.I3_u1()
+
+    def I2_u2(self) -> complex:
+        """Phase 2 current. Angle leading relative to U2"""
+        return self.I2_u1() * cmath.rect(1, -120 / 180 * cmath.pi)
+
+    def f(self) -> float:
+        return self._addr(self.defined_registers['Frequency of supply voltage [Hz]']['addr'])
