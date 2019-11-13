@@ -6,6 +6,7 @@ from src.eastron import DebuggableSerial, Eastron3P3W
 
 
 parser = argparse.ArgumentParser(description='Eastron reader')
+parser.add_argument('--addr', help="Address to query", type=int, default=1)
 parser.add_argument('serial_port', help="Serial port to open")
 
 args = parser.parse_args()
@@ -14,7 +15,7 @@ args = parser.parse_args()
 ser = DebuggableSerial(args.serial_port, 9600, serial.EIGHTBITS, serial.PARITY_EVEN, serial.STOPBITS_ONE)
 ser.debug = False
 ser.reset_input_buffer()
-m = Eastron3P3W(ser, 1)
+m = Eastron3P3W(ser, args.addr)
 
 all_addresses = [
     info['addr']

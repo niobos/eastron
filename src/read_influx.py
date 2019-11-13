@@ -7,6 +7,7 @@ from influxdb import InfluxDBClient
 from eastron import DebuggableSerial, Eastron3P3W
 
 parser = argparse.ArgumentParser(description='Eastron reader')
+parser.add_argument('--addr', help="Address to query", type=int, default=1)
 parser.add_argument('serial_port', help="Serial port to query on")
 parser.add_argument('--db', help="influx database to write to", default='eastron')
 
@@ -16,12 +17,13 @@ args = parser.parse_args()
 ser = DebuggableSerial(args.serial_port, 9600, serial.EIGHTBITS, serial.PARITY_EVEN, serial.STOPBITS_ONE)
 ser.debug = False
 ser.reset_input_buffer()
-m = Eastron3P3W(ser, 1)
+m = Eastron3P3W(ser, args.addr)
 
 points = [
     {
         'measurement': 'power',
         'tags': {
+            'addr': args.addr,
             'phase': 'total',
         },
         'fields': {
@@ -33,6 +35,7 @@ points = [
     {
         'measurement': 'power',
         'tags': {
+            'addr': args.addr,
             'phase': '1',
         },
         'fields': {
@@ -44,6 +47,7 @@ points = [
     {
         'measurement': 'power',
         'tags': {
+            'addr': args.addr,
             'phase': '3',
         },
         'fields': {
@@ -54,7 +58,9 @@ points = [
     },
     {
         'measurement': 'energy',
-        'tags': {},
+        'tags': {
+            'addr': args.addr,
+        },
         'fields': {
             'true_kWh': m.E().real,
             'reactive_kVArh': m.E().imag,
@@ -63,7 +69,9 @@ points = [
     },
     {
         'measurement': 'frequency',
-        'tags': {},
+        'tags': {
+            'addr': args.addr,
+        },
         'fields': {
             'frequency': m.f(),
         },
@@ -71,6 +79,7 @@ points = [
     {
         'measurement': 'line_voltage',
         'tags': {
+            'addr': args.addr,
             'lines': '12',
         },
         'fields': {
@@ -80,6 +89,7 @@ points = [
     {
         'measurement': 'line_voltage',
         'tags': {
+            'addr': args.addr,
             'lines': '23',
         },
         'fields': {
@@ -89,6 +99,7 @@ points = [
     {
         'measurement': 'line_voltage',
         'tags': {
+            'addr': args.addr,
             'lines': '31',
         },
         'fields': {
@@ -98,6 +109,7 @@ points = [
     {
         'measurement': 'line_current',
         'tags': {
+            'addr': args.addr,
             'line': '1',
         },
         'fields': {
@@ -108,6 +120,7 @@ points = [
     {
         'measurement': 'line_current',
         'tags': {
+            'addr': args.addr,
             'line': '2',
         },
         'fields': {
@@ -118,6 +131,7 @@ points = [
     {
         'measurement': 'line_current',
         'tags': {
+            'addr': args.addr,
             'line': '3',
         },
         'fields': {
